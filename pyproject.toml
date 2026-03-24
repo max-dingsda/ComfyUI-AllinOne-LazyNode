@@ -29,7 +29,7 @@ Documentation = "https://github.com/max-dingsda/ComfyUI-AllinOne-LazyNode/wiki"
 "Bug Tracker" = "https://github.com/max-dingsda/ComfyUI-AllinOne-LazyNode/issues"
 
 [tool.comfy]
-PublisherId = ""
+PublisherId = "max-dingsda"
 DisplayName = "ComfyUI-AllinOne-LazyNode"
 Icon = ""
 includes = [] 
