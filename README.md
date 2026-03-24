@@ -17,9 +17,12 @@ Custom node for ComfyUI that collects key workflow settings in one place and exp
 - `steps` (integer)
 - `cfg` (float)
 - `filename` (single-line text, optional override)
+- **Create Filename from Input** button — regenerates the automatic filename from the current `checkpoint`, `lora`, and `sampler` values. Use this to reset back to the auto-generated name after a manual edit.
 
 ## Outputs
-## These Outputs do not (!) replace other nodes, they are meant to feed into them. For Example, the "checkpoint"-output is meant to feed into the dropdown of the "Load Checkpoint" node
+
+> These outputs do not replace other nodes — they are meant to feed into them. For example, the `checkpoint` output is meant to feed into the dropdown of the **Load Checkpoint** node.
+
 
 - `checkpoint` (string, flexible socket type for COMBO compatibility)
 - `lora` (string, flexible socket type for COMBO compatibility)

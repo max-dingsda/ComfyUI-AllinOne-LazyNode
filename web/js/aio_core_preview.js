@@ -90,8 +90,62 @@ function hookWidgetCallbacks(node) {
     });
 }
 
+function addRefreshButton(node) {
+    if (node.widgets?.find((w) => w.name === "__aio_refresh_filename")) {
+        return;
+    }
+
+    const onClick = () => {
+        node.__aioFilenameManual = false;
+        updateFilenameIfAuto(node);
+    };
+
+    // Custom widget type so LiteGraph hits the default: branch and calls draw().
+    // Standard "button" type uses a hardcoded renderer that ignores w.draw.
+    const btn = {
+        name: "__aio_refresh_filename",
+        type: "aio_button",
+        label: "Create Filename from Input",
+        options: { serialize: false },
+        clicked: false,
+        draw(ctx, _node, widget_width, y, H) {
+            const margin = 15;
+            const w = widget_width - margin * 2;
+            ctx.fillStyle = this.clicked ? "#0d47a1" : "#1565c0";
+            ctx.beginPath();
+            ctx.roundRect(margin, y, w, H, H * 0.3);
+            ctx.fill();
+            ctx.fillStyle = "#ffffff";
+            ctx.font = `bold ${Math.floor(H * 0.5)}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(this.label, margin + w * 0.5, y + H * 0.5);
+        },
+        mouse(event, _pos, _node) {
+            if (event.type === "pointerdown") {
+                this.clicked = true;
+                onClick();
+                return true;
+            }
+            if (event.type === "pointerup" || event.type === "pointerleave") {
+                this.clicked = false;
+                return true;
+            }
+            return false;
+        },
+    };
+
+    node.widgets = node.widgets || [];
+    node.widgets.push(btn);
+    const size = node.computeSize?.();
+    if (size) {
+        node.setSize?.([Math.max(node.size[0], size[0]), size[1]]);
+    }
+}
+
 function initializeNode(node) {
     hookWidgetCallbacks(node);
+    addRefreshButton(node);
     const filenameWidget = findWidget(node, "filename");
     if (!filenameWidget) {
         return;
