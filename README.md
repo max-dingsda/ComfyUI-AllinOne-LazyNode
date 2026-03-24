@@ -19,6 +19,7 @@ Custom node for ComfyUI that collects key workflow settings in one place and exp
 - `filename` (single-line text, optional override)
 
 ## Outputs
+## These Outputs do not (!) replace other nodes, they are meant to feed into them. For Example, the "checkpoint"-output is meant to feed into the dropdown of the "Load Checkpoint" node
 
 - `checkpoint` (string, flexible socket type for COMBO compatibility)
 - `lora` (string, flexible socket type for COMBO compatibility)
