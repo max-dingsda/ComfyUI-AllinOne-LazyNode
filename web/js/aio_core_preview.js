@@ -37,6 +37,34 @@ function applyWidgetValue(widget, value) {
     }
 }
 
+function propagateValue(node, widgetName, widgetValue) {
+    const outputIndex = node.outputs.findIndex((o) => o.name === widgetName);
+    if (outputIndex === -1) {
+        return;
+    }
+
+    const output = node.outputs[outputIndex];
+    if (!output.links?.length) {
+        return;
+    }
+
+    // The python node sends "" for "(none)", so we should do the same.
+    const valueToPropagate = widgetValue === "(none)" ? "" : widgetValue;
+
+    for (const linkId of output.links) {
+        const link = app.graph.links[linkId];
+        if (!link) continue;
+
+        const targetNode = app.graph.getNodeById(link.target_id);
+        if (!targetNode) continue;
+
+        const targetInput = targetNode.inputs[link.target_slot];
+        const widgetNameOnTarget = targetInput?.widget?.name;
+        const targetWidget = widgetNameOnTarget ? findWidget(targetNode, widgetNameOnTarget) : undefined;
+        targetWidget && applyWidgetValue(targetWidget, valueToPropagate);
+    }
+}
+
 function getAutoForNode(node) {
     const checkpoint = findWidget(node, "checkpoint")?.value;
     const lora = findWidget(node, "lora")?.value;
@@ -76,15 +104,18 @@ function hookWidgetCallbacks(node) {
         filenameWidget.__aioWrapped = true;
     }
 
-    ["checkpoint", "lora", "sampler"].forEach((name) => {
+    const widgetsToHook = ["checkpoint", "lora", "sampler", "scheduler", "steps", "cfg", "positive_prompt", "negative_prompt"];
+
+    widgetsToHook.forEach((name) => {
         const widget = findWidget(node, name);
         if (!widget || widget.__aioWrapped) {
             return;
         }
         const original = widget.callback;
-        widget.callback = (...args) => {
-            original?.apply(widget, args);
+        widget.callback = function (...args) {
+            original?.apply(this, args);
             updateFilenameIfAuto(node);
+            propagateValue(node, name, this.value);
         };
         widget.__aioWrapped = true;
     });
@@ -147,45 +178,98 @@ function initializeNode(node) {
     hookWidgetCallbacks(node);
     addRefreshButton(node);
     const filenameWidget = findWidget(node, "filename");
-    if (!filenameWidget) {
-        return;
-    }
-    const current = String(filenameWidget.value ?? "").trim();
+    const current = String(filenameWidget?.value ?? "").trim();
     node.__aioFilenameManual = current.length > 0;
     if (!node.__aioFilenameManual) {
         updateFilenameIfAuto(node);
     }
+
+    // Propagate all values on initialization to ensure downstream nodes have the correct values.
+    const widgetsToPropagate = ["checkpoint", "lora", "sampler", "scheduler", "steps", "cfg", "positive_prompt", "negative_prompt"];
+    widgetsToPropagate.forEach((name) => {
+        const widget = findWidget(node, name);
+        if (widget) {
+            propagateValue(node, name, widget.value);
+        }
+    });
 }
 
 app.registerExtension({
-    name: "ComfyUI_AIOcore.FilenameFieldBehavior",
-    async beforeRegisterNodeDef(nodeType, nodeData) {
-        const comfyClass = nodeType?.comfyClass ?? nodeData?.name;
-        if (comfyClass !== "AIOCoreSettingsNode") {
-            return;
-        }
+	name: "ComfyUI_AIOcore.Behaviors",
 
-        const onNodeCreated = nodeType.prototype.onNodeCreated;
-        nodeType.prototype.onNodeCreated = function () {
-            const result = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
-            try {
-                initializeNode(this);
-            } catch (e) {
-                console.error("ComfyUI_AIOcore filename init failed:", e);
-            }
-            return result;
-        };
+	setup() {
+		const originalGraphToPrompt = app.graphToPrompt;
 
-        const onConfigure = nodeType.prototype.onConfigure;
-        nodeType.prototype.onConfigure = function () {
-            onConfigure?.apply(this, arguments);
-            requestAnimationFrame(() => {
-                try {
-                    initializeNode(this);
-                } catch (e) {
-                    console.error("ComfyUI_AIOcore filename configure failed:", e);
-                }
-            });
-        };
-    },
+		app.graphToPrompt = async function () {
+			const affectedInputs = [];
+			const graph = app.graph;
+			try {
+				// Find all AIOCoreSettingsNode instances
+				for (const node of graph.nodes) {
+					if (node.type === "AIOCoreSettingsNode") {
+						// For each output on our node that has links
+						for (const output of node.outputs) {
+							if (output.links?.length) {
+								// For each link from that output
+								for (const linkId of output.links) {
+									const link = graph.links[linkId];
+									if (link) {
+										const targetNode = graph.getNodeById(link.target_id);
+										const targetSlot = link.target_slot;
+										// If the target input exists and is currently linked
+										if (targetNode?.inputs[targetSlot]?.link != null) {
+											// Store the input and its original link ID
+											affectedInputs.push({
+												input: targetNode.inputs[targetSlot],
+												linkId: link.id,
+											});
+											// Temporarily set the link to null
+											targetNode.inputs[targetSlot].link = null;
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				// Now, when the original function runs, it will see the inputs as unlinked
+				// and will serialize the widget's value instead of the link info.
+				return await originalGraphToPrompt.apply(app, arguments);
+			} finally {
+				// After serialization, restore the links on the inputs
+				for (const item of affectedInputs) {
+					item.input.link = item.linkId;
+				}
+			}
+		};
+	},
+
+	async beforeRegisterNodeDef(nodeType, nodeData) {
+		const comfyClass = nodeType?.comfyClass ?? nodeData?.name;
+		if (comfyClass !== "AIOCoreSettingsNode") {
+			return;
+		}
+
+		const onNodeCreated = nodeType.prototype.onNodeCreated;
+		nodeType.prototype.onNodeCreated = function () {
+			onNodeCreated?.apply(this, arguments);
+			try {
+				initializeNode(this);
+			} catch (e) {
+				console.error("ComfyUI_AIOcore init failed on 'onNodeCreated'", e);
+			}
+		};
+
+		const onConfigure = nodeType.prototype.onConfigure;
+		nodeType.prototype.onConfigure = function () {
+			onConfigure?.apply(this, arguments);
+			requestAnimationFrame(() => {
+				try {
+					initializeNode(this);
+				} catch (e) {
+					console.error("ComfyUI_AIOcore init failed on 'onConfigure'", e);
+				}
+			});
+		};
+	},
 });
